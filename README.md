@@ -11,7 +11,9 @@
 
 ## Getting Started
 
-Clone the repository and install the project dependencies:
+### Option 1: Using uv
+
+Clone the repository, then synchronize the project environment:
 
 ```powershell
 git clone <repository-url>
@@ -19,9 +21,33 @@ cd gcp-hello-world
 uv sync
 ```
 
+Run the application:
+
+```powershell
+uv run gcp-hello-world
+```
+
+### Option 2: Using pip
+
+Create and activate a virtual environment, then install the project in editable mode:
+
+```powershell
+git clone <repository-url>
+cd gcp-hello-world
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e .
+```
+
+Run the application:
+
+```powershell
+gcp-hello-world
+```
+
 ## Usage
 
-Run the application through the project entry point:
+You can also run the application through `uv` directly:
 
 ```powershell
 uv run gcp-hello-world
