@@ -2,18 +2,21 @@
 
 ## Overview
 
-`gcp-hello-world` is a small Python demo designed to demonstrate a modern, container-friendly application deployed to Google Cloud Run. It provides a simple command-line entry point that prints a welcome message.
+`gcp-hello-world` is a containerized Python web application built with **FastAPI** and **Gradio**, designed for deployment to Google Cloud Run. It serves both a JSON REST API and an interactive Gradio web UI from a single Uvicorn server.
+
+The repository also retains the original `hello_world` Rich-based terminal demo under `src/hello_world/`.
 
 ## Requirements
 
-- Python 3.15 or newer
-- [uv](https://docs.astral.sh/uv/) for dependency management
+- **Python 3.12+** (`requires-python = ">=3.12"`)
+- **[uv](https://docs.astral.sh/uv/)** (recommended) or `pip`
+- **Docker** (optional, for container builds)
 
 ## Getting Started
 
-### Option 1: Using uv
+### Option 1: Using `uv` (Recommended)
 
-Clone the repository, then synchronize the project environment:
+Clone the repository and synchronize the virtual environment and dependencies:
 
 ```powershell
 git clone <repository-url>
@@ -21,13 +24,13 @@ cd gcp-hello-world
 uv sync
 ```
 
-Run the application:
+Start the local development server:
 
 ```powershell
-uv run gcp-hello-world
+uv run uvicorn gcp_hello_world.main:app --reload --port 8080
 ```
 
-### Option 2: Using pip
+### Option 2: Using `pip`
 
 Create and activate a virtual environment, then install the project in editable mode:
 
@@ -39,33 +42,58 @@ python -m venv .venv
 python -m pip install -e .
 ```
 
-Run the application:
+Start the local development server:
 
 ```powershell
-gcp-hello-world
+uvicorn gcp_hello_world.main:app --reload --port 8080
 ```
 
-## Usage
+## What Runs in Your Browser
 
-You can also run the application through `uv` directly:
+Once Uvicorn starts (`Uvicorn running on http://127.0.0.1:8080`), open the following URLs in your browser:
+
+| URL | What You'll See |
+| :--- | :--- |
+| `http://127.0.0.1:8080/` | **Status JSON** — Returns `{"status": "running", ...}` with paths to the API, docs, and UI. |
+| `http://127.0.0.1:8080/ui` | **Gradio Web UI** — Interactive `"Cloud Run Gradio Test"` page with a **Name** input, **Generate Greeting** button, and **Server Response** output showing the greeting and UTC server time. |
+| `http://127.0.0.1:8080/api/greet?name=Developer` | **Greeting API** — Returns a JSON object with a greeting `message` and UTC `timestamp` (`name` defaults to `"World"` if omitted). |
+| `http://127.0.0.1:8080/docs` | **Swagger UI** — Interactive FastAPI documentation for exploring and testing API endpoints. |
+
+## Running the CLI Demo
+
+To run the standalone Rich terminal demo in `src/hello_world/`:
 
 ```powershell
-uv run gcp-hello-world
+uv run python src/hello_world/main.py
 ```
 
-For direct development execution:
+## Docker
+
+Build and run the container locally (exposing port `8080`, matching Cloud Run's default `$PORT`):
 
 ```powershell
-uv run python src/gcp_hello_world/main.py
+docker build -t gcp-hello-world .
+docker run --rm -p 8080:8080 gcp-hello-world
 ```
+
+Then open `http://127.0.0.1:8080/ui` (or any of the endpoints above) in your browser.
 
 ## Project Structure
 
 ```text
 gcp-hello-world/
-|-- src/gcp_hello_world/
-|   |-- __init__.py
-|   `-- main.py
+|-- src/
+|   |-- gcp_hello_world/
+|   |   |-- __init__.py
+|   |   |-- logic.py        # Greeting generation logic
+|   |   |-- main.py         # FastAPI app + mounted Gradio UI
+|   |   `-- ui.py           # Gradio Blocks interface
+|   `-- hello_world/
+|       |-- __init__.py
+|       `-- main.py         # Standalone Rich CLI demo
+|-- .dockerignore
+|-- .python-version
+|-- Dockerfile
 |-- pyproject.toml
 |-- uv.lock
 `-- README.md

@@ -3,12 +3,16 @@ name = "gcp-hello-world"
 version = "0.1.0"
 description = "Demo project to securely deploy a simple containerized Python script to Google Cloud Run"
 readme = "README.md"
-requires-python = ">=3.15"
+requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.164.0",
+    "gradio>=6.32.0",
     "rich>=15.0.0",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
+hello-world = "hello_world:main"
 gcp-hello-world = "gcp_hello_world:main"
 
 [build-system]

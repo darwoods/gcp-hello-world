@@ -1,14 +1,25 @@
-# A simple hello world demo
-            
-from datetime import datetime     # Built-in Python module (no uv add needed)
-from rich.console import Console  # Third-party library (installed via uv)
-from rich.panel import Panel
+# A simple Cloud Run hybrid demo
 
-console = Console()
+import gradio as gr
+from fastapi import FastAPI
+from .logic import generate_greeting
+from .ui import build_gradio_app
 
-def main():
-    now = datetime.now().strftime("%H:%M:%S")
-    console.print(Panel(f"[bold green]Hello, World![/bold green]\nThe time is [cyan]{now}[/cyan]"))
+app = FastAPI(title="Cloud Run Hybrid Test")
 
-if __name__ == "__main__":
-    main()
+@app.get("/")
+async def root():
+    return {
+        "status": "running",
+        "try_api": "/api/greet?name=Developer",
+        "try_swagger_docs": "/docs",
+        "try_gradio_ui": "/ui",
+    }
+
+@app.get("/api/greet")
+async def api_greet(name: str = "World"):
+    return generate_greeting(name)
+
+# Mount the Gradio interface at /ui
+gradio_app = build_gradio_app()
+app = gr.mount_gradio_app(app, gradio_app, path="/ui")
