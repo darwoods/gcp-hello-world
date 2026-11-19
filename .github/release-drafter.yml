@@ -1,0 +1,60 @@
+# ==============================================================================
+# Release Drafter Configuration
+# Controls how merged Pull Requests are grouped and how version numbers bump.
+# ==============================================================================
+
+# Title and Git tag format for the generated release (e.g., v0.1.0, v1.2.3).
+# $RESOLVED_VERSION is calculated automatically by the version-resolver below.
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+
+# Groups merged PRs into sections based on the GitHub labels attached to them.
+# The order here determines the order sections appear in your release notes.
+categories:
+  - title: '💥 Breaking Changes'
+    labels:
+      - 'breaking'
+  - title: '🚀 Features'
+    labels:
+      - 'feature'
+      - 'enhancement'
+  - title: '🐛 Bug Fixes'
+    labels:
+      - 'fix'
+      - 'bug'
+  - title: '🧰 Maintenance'
+    labels:
+      - 'chore'
+      - 'dependencies'
+      - 'docs'
+
+# How each individual PR is formatted in the list:
+# $TITLE = Pull Request title, $NUMBER = Pull Request ID (e.g., #1)
+change-template: '- $TITLE (#$NUMBER)'
+
+# Semantic Versioning (MAJOR.MINOR.PATCH) rules.
+# Release Drafter checks all PRs merged since your last published release tag
+# and picks the HIGHEST-priority bump (major > minor > patch).
+version-resolver:
+  major:
+    labels:
+      - 'breaking'      # Bumps X.0.0 (incompatible API/behavior changes)
+  minor:
+    labels:
+      - 'feature'       # Bumps 0.X.0 (new backward-compatible features)
+      - 'enhancement'
+  patch:
+    labels:
+      - 'fix'           # Bumps 0.0.X (bug fixes, docs, internal cleanup)
+      - 'bug'
+      - 'chore'
+      - 'dependencies'
+      - 'docs'
+  default: patch        # Fallback bump if a PR has no matching version label
+
+# Overall Markdown layout of the draft release body.
+# $CHANGES gets replaced with all the categorized sections above.
+template: |
+  ## Changes
+
+  $CHANGES

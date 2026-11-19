@@ -1,0 +1,32 @@
+# ==============================================================================
+# GitHub Actions Workflow: Release Drafter
+# Runs automatically on GitHub's servers whenever code is merged into main.
+# ==============================================================================
+
+# Friendly name shown in the "Actions" tab of your GitHub repository.
+name: Release Drafter
+
+# Trigger event: Run this workflow every time commits are pushed to 'main'
+# (which happens automatically whenever you merge a Pull Request into 'main').
+on:
+  push:
+    branches:
+      - main
+
+# Principle of least privilege: Grant this automated job only the minimum
+# permissions it needs to read PR metadata and create/edit Draft Releases.
+permissions:
+  contents: write       # Required to create and update Draft Releases and tags
+  pull-requests: read   # Required to read PR titles, numbers, and labels
+
+jobs:
+  update_release_draft:
+    # Spin up a temporary Linux VM in GitHub's cloud (fastest & free on public repos).
+    runs-on: ubuntu-latest
+
+    steps:
+      # Download and execute v6 of the official Release Drafter action.
+      - uses: release-drafter/release-drafter@v6
+        env:
+          # Automatic, short-lived authentication token created by GitHub for this run.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
