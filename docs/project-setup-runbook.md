@@ -1,46 +1,46 @@
 # Master New Python Project Runbook (Production-Style Solo Workflow)
 
-A repeatable, end-to-end guide for bootstrapping a Python repository with `uv`, multi-file package structure, VS Code + Ruff + Pylance, `pytest`, GitHub Actions CI, Release Drafter, PR decision templates, and a hardened production `Dockerfile`.
+A repeatable, end-to-end guide for setting up and maintaining Python repositories using `uv`, VS Code, Ruff, Pytest, GitHub Actions CI, Release Drafter, and Docker.
 
 ---
 
-## 0. One-Time Local Machine Setup (Run Once per Computer)
+## 0. One-Time Local Machine Configuration
 
-These global Git settings apply to every repository on your machine:
+Run these commands once on your computer (they apply globally to all repositories):
 
 ```bash
-# Automatically remove stale 'origin/<branch>' bookmarks on every git pull/fetch
+# Automatically remove stale 'origin/<branch>' references on every git pull/fetch
 git config --global fetch.prune true
 
 # Optional alias: safely delete all local branches already merged into main
 git config --global alias.cleanup '!git fetch -p && git branch --merged main | grep -v "^\*\|main" | xargs -r git branch -d'
 ```
 
-### Recommended VS Code Extensions
-Install these official extensions once in VS Code:
-- **Python** (`ms-python.python`)
-- **Pylance** (`ms-python.vscode-pylance`) — IntelliSense and static type checking
-- **Ruff** (`charliermarsh.ruff`) — Linting, formatting, and import sorting
-- **GitHub Pull Requests** (`GitHub.vscode-pull-request-github`) — *(Optional)* Manage PRs and delete local branches inside VS Code
-
 ---
 
-## Phase 1: Local Initialization & Multi-File Project Structure
+## Phase 1: Local Project Initialization & Tooling (VS Code Terminal)
 
-### 1. Initialize Project with `uv` (`--package` creates a clean `src/` layout)
+### 1. Initialize the project with `uv`
 ```bash
 mkdir my-project && cd my-project
 uv init --package
 ```
+> **Why `--package`?** Unlike plain `uv init` (which creates a flat script folder), `--package` creates a proper installable `src/my_project/` package layout with a `[build-system]` in `pyproject.toml`. This ensures `pytest` and Docker test your actual installed package cleanly without `sys.path` workarounds.
 
-### 2. Install Development Dependencies
+### 2. Install development tools (`ruff` and `pytest`)
 ```bash
 uv add --dev ruff pytest
 ```
-> **Why both the Ruff extension and `uv` package?** The VS Code extension formats and highlights issues live as you type, while `uv add --dev ruff` pins the exact Ruff version in `uv.lock` so your terminal and headless GitHub Actions CI run identical rules. Pylance is an IDE-only extension, so it is installed in VS Code rather than via `uv`.
+> **Why both the VS Code Ruff extension and the `uv` package?** The VS Code extension provides real-time red squiggles and format-on-save while you type, while the `uv` dev package pins the exact Ruff version in `uv.lock` so your terminal and headless GitHub Actions CI run the identical rules.
 
-### 3. Configure Workspace VS Code Settings (`.vscode/settings.json`)
-Create `.vscode/settings.json` so editor rules travel with the repository across machines (VS Code's Python extension auto-detects `.venv` across Windows, macOS, and Linux):
+### 3. Configure VS Code Workspace Settings (`.vscode/settings.json`)
+Install these recommended VS Code extensions:
+- **Python** (`ms-python.python`)
+- **Pylance** (`ms-python.vscode-pylance`) — IntelliSense and static type checking *(installed in VS Code, not via `uv`)*
+- **Ruff** (`charliermarsh.ruff`) — Linting, formatting, and import sorting
+- **GitHub Pull Requests** (`GitHub.vscode-pull-request-github`) — *(Optional)* Manage PRs and local branch cleanup in VS Code
+
+Create `.vscode/settings.json` in your project root (commit this to Git so settings travel with the repo):
 
 ```json
 {
@@ -56,23 +56,15 @@ Create `.vscode/settings.json` so editor rules travel with the repository across
   "python.analysis.typeCheckingMode": "standard"
 }
 ```
+> **Settings rationale:**
+> - `"editor.rulers": [80, 100]` adds vertical guides at 80 characters (PEP 8 docstring/comment width) and 100 characters (hard line ceiling).
+> - `"python.analysis.typeCheckingMode": "standard"` catches type mismatches and missing annotations without the noise of `strict` mode.
+> - VS Code automatically detects `uv`'s `.venv` on Windows, macOS, and Linux without hardcoding an OS-specific interpreter path.
 
-### 4. Set Up Multi-File Package Layout (`src/my_project/`)
-Keep `__init__.py` free of side effects, isolate logging setup in its own module, and expose a clear `main.py` entry point:
+### 4. Set up a multi-file production package layout (`src/my_project/`)
+Keep `__init__.py` free of startup side effects, isolate logging in its own module, and use `main.py` as your entry point:
 
-```text
-my-project/
-├── pyproject.toml
-├── src/
-│   └── my_project/
-│       ├── __init__.py          # Package metadata (auto-synced version, zero side effects)
-│       ├── logging_config.py    # Rotating file + console logging setup
-│       └── main.py              # Application entry point & core logic
-└── tests/
-    └── test_main.py             # Pytest unit tests (do NOT add __init__.py here)
-```
-
-- **`src/my_project/__init__.py`** *(dynamically reads the version from `pyproject.toml` so there is only one source of truth)*:
+- **`src/my_project/__init__.py`** *(dynamic version synced from `pyproject.toml`)*:
   ```python
   """My Project package."""
 
@@ -84,7 +76,7 @@ my-project/
       __version__ = "0.0.0-dev"
   ```
 
-- **`src/my_project/logging_config.py`** *(uses `RotatingFileHandler` so logs cap at 5 MB and reads `LOG_LEVEL` from environment variables)*:
+- **`src/my_project/logging_config.py`** *(rotating file logs + console `stdout` for Docker)*:
   ```python
   import logging
   import os
@@ -92,11 +84,10 @@ my-project/
   from pathlib import Path
 
 
-  def setup_logging(logger_name: str = "my_project") -> logging.Logger:
-      log_level_name = os.getenv("LOG_LEVEL", "INFO").upper()
-      log_level = getattr(logging, log_level_name, logging.INFO)
-
+  def setup_logging() -> logging.Logger:
       Path("logs").mkdir(exist_ok=True)
+      log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+
       formatter = logging.Formatter(
           "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
       )
@@ -104,7 +95,7 @@ my-project/
       file_handler = RotatingFileHandler(
           "logs/app.log",
           maxBytes=5_000_000,  # 5 MB per file
-          backupCount=3,       # Keep 3 rotated backup files
+          backupCount=3,       # Keep 3 rotated backups
           encoding="utf-8",
       )
       file_handler.setFormatter(formatter)
@@ -112,18 +103,15 @@ my-project/
       console_handler = logging.StreamHandler()
       console_handler.setFormatter(formatter)
 
-      root_logger = logging.getLogger()
-      root_logger.setLevel(log_level)
-      root_logger.handlers.clear()
-      root_logger.addHandler(file_handler)
-      root_logger.addHandler(console_handler)
-
-      return logging.getLogger(logger_name)
+      logging.basicConfig(
+          level=getattr(logging, log_level, logging.INFO),
+          handlers=[file_handler, console_handler],
+      )
+      return logging.getLogger("my_project")
   ```
 
-- **`src/my_project/main.py`**:
+- **`src/my_project/main.py`** *(application entry point)*:
   ```python
-  from my_project import __version__
   from my_project.logging_config import setup_logging
 
 
@@ -133,33 +121,34 @@ my-project/
 
   def main() -> None:
       logger = setup_logging()
-      logger.info("Application started (version=%s).", __version__)
+      logger.info("Application started.")
 
 
   if __name__ == "__main__":
       main()
   ```
 
-### 5. Configure `pyproject.toml` Entry Point & Ruff Rules
-In `pyproject.toml`, point `[project.scripts]` to `my_project.main:main` and add standard Ruff lint rules:
+- **Update `pyproject.toml`** to configure Ruff and point your CLI script to `main.py`:
+  ```toml
+  [project.scripts]
+  my-project = "my_project.main:main"
 
-```toml
-[project.scripts]
-my-project = "my_project.main:main"
+  [tool.ruff]
+  line-length = 100
 
-[tool.ruff]
-line-length = 100
-target-version = "py312"
+  [tool.ruff.lint]
+  select = ["E", "F", "I", "UP", "B"]
+  ```
 
-[tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
-```
+### 5. Create a starter test in `tests/test_main.py`
+*(Do not put `__init__.py` inside `tests/`.)*
 
-### 6. Create Starter Test (`tests/test_main.py`)
 ```bash
 mkdir -p tests
 ```
+
 ```python
+# tests/test_main.py
 from my_project.main import add
 
 
@@ -168,27 +157,31 @@ def test_add() -> None:
     assert add(-1, 1) == 0
 ```
 
-### 7. Create `.env.example` & Update `.gitignore`
-- **`.env.example`** *(committed as documentation for required environment variables)*:
+### 6. Create `.env.example` and update `.gitignore`
+- **`.env.example`** *(committed to Git as a safe blueprint; note there is no `.txt` extension)*:
   ```env
-  APP_ENV=development
+  # Illustrative example variables — keep only variables your app actually reads
   LOG_LEVEL=INFO
-  DATABASE_URL=sqlite:///local.db
+  API_KEY=your_api_key_here
   ```
-- **`.gitignore`** *(append to the file generated by `uv init`)*:
+  > **Local usage:** Copy `.env.example` to `.env` (`cp .env.example .env`), fill in real secrets, and run locally via `uv run --env-file .env my-project`. Never commit `.env`.
+
+- **`.gitignore`** *(append these blocks to the `.gitignore` generated by `uv init`)*:
   ```gitignore
-  # Secrets & local runtime logs
+  # Secrets
   .env
+
+  # Local runtime logs
   logs/
   *.log
   ```
 
-### 8. Create `.github/` Automation & PR Templates
+### 7. Create `.github/` CI, Release Drafter, and PR templates
 ```bash
 mkdir -p .github/workflows
 ```
 
-- **`.github/workflows/ci.yml`** *(runs Ruff lint/format checks and Pytest on every PR)*:
+- **`.github/workflows/ci.yml`** *(runs Ruff and Pytest on every Pull Request)*:
   ```yaml
   name: CI
 
@@ -211,7 +204,7 @@ mkdir -p .github/workflows
           run: uv run pytest
   ```
 
-- **`.github/release-drafter.yml`** *(sorts merged PRs and computes `MAJOR.MINOR.PATCH` versions)*:
+- **`.github/release-drafter.yml`** *(categorizes merged PRs and computes `MAJOR.MINOR.PATCH`)*:
   ```yaml
   name-template: 'v$RESOLVED_VERSION'
   tag-template: 'v$RESOLVED_VERSION'
@@ -301,7 +294,7 @@ mkdir -p .github/workflows
   - [ ] 🧰 `chore` / `docs` / `dependencies` — Maintenance or docs (bumps PATCH)
   ```
 
-### 9. Verify Locally & Make Initial Commit on `main`
+### 8. Verify locally and make your initial commit on `main`
 ```bash
 uv run ruff check . && uv run ruff format . && uv run pytest
 git add .
@@ -312,96 +305,101 @@ git commit -m "Initial project setup with uv, CI, logging, and GitHub templates"
 
 ## Phase 2: Create & Configure the GitHub Repository
 
-10. **Create a new Public repository on GitHub** *(leave README, `.gitignore`, and license unchecked)*.
-11. **Push `main` to GitHub:**
-    ```bash
-    git remote add origin https://github.com/<your-username>/my-project.git
-    git branch -M main
-    git push -u origin main
-    ```
-12. **Configure GitHub Repository Settings:**
-    - **General → Pull Requests:** Check **Automatically delete head branches**.
-    - **Issues → Labels:** Keep `enhancement`, `bug`, `dependencies`; rename `documentation` → `docs`; create `breaking` (red) and `chore` (gray).
-    - **Rules → Rulesets → New branch ruleset:** Target **Default branch (`main`)**, set to **Active**, and check:
-      - **Restrict deletions**
-      - **Require a pull request before merging** *(keep Required approvals = `0`)*
-      - **Block force pushes**
-      - *(After PR #1 runs CI, return here and check **Require status checks to pass before merging** → select **`test-and-lint`**.)*
+1. **Create a new Public repository on GitHub** *(leave README, `.gitignore`, and license unchecked)*.
+2. **Push `main` to GitHub:**
+   ```bash
+   git remote add origin https://github.com/<your-username>/my-project.git
+   git branch -M main
+   git push -u origin main
+   ```
+3. **Configure GitHub Repository Settings:**
+   - **General → Pull Requests:** Check **Automatically delete head branches**.
+   - **Issues → Labels:** Keep `enhancement`, `bug`, `dependencies`; rename `documentation` → `docs`; create `breaking` (red) and `chore` (gray).
+   - **Rules → Rulesets → New branch ruleset:** Target **Default branch (`main`)**, set to **Active**, and check:
+     - **Restrict deletions**
+     - **Require a pull request before merging** *(keep Required approvals = `0`)*
+     - **Block force pushes**
+     - *(After your first PR runs CI, return here and check **Require status checks to pass before merging** → select **`test-and-lint`**.)*
 
 ---
 
 ## Phase 3: Day-to-Day Feature & Bug-Fix Cycle
 
-*From this point forward, `main` is protected—all changes go through branches and PRs.*
+*From this point on, `main` is protected—all work happens on branches.*
 
-13. **Create a branch & add runtime dependencies:**
-    ```bash
-    git checkout -b feat/your-feature
-    uv add <package-name>
-    ```
-14. **Write code + tests, then run local checks:**
-    ```bash
-    uv run ruff check . && uv run ruff format . && uv run pytest
-    ```
-15. **Commit, push, and open a Pull Request:**
-    ```bash
-    git add .
-    git commit -m "Describe your change"
-    git push -u origin feat/your-feature
-    ```
-    - Fill in **What Changed** and **Why / Decision Log** in the auto-loaded PR template.
-    - Select the matching label (`breaking`, `enhancement`, `bug`, `chore`, `docs`, `dependencies`).
-    - Wait for **`test-and-lint`** to turn green (`✓`), then click **Merge pull request**.
-16. **Clean up locally:**
-    ```bash
-    git checkout main && git pull && git cleanup
-    ```
+1. **Create a branch & add runtime dependencies:**
+   ```bash
+   git checkout -b feat/your-feature
+   uv add <package-name>
+   ```
+2. **Write code & tests, then run checks locally:**
+   ```bash
+   uv run ruff check . && uv run ruff format . && uv run pytest
+   ```
+3. **Commit, push, and open a Pull Request:**
+   ```bash
+   git add .
+   git commit -m "Describe your change"
+   git push -u origin feat/your-feature
+   ```
+   - Fill in **What Changed** and **Why / Decision Log** in the auto-loaded PR template.
+   - Select the matching label (`breaking`, `enhancement`, `bug`, `chore`, `docs`, or `dependencies`).
+   - Wait for **`test-and-lint`** to turn green (`✓`), then click **Merge pull request**.
+4. **Sync `main` locally and remove merged local branches:**
+   ```bash
+   git checkout main && git pull && git cleanup
+   ```
 
 ---
 
 ## Phase 4: Production Containerization & Publishing Releases
 
-17. **Add Docker files via a branch + PR** *(once core modules and `uv.lock` are stable)*:
-    - **`.dockerignore`**:
-      ```dockerignore
-      .git
-      .github
-      .vscode
-      .venv
-      .env
-      __pycache__
-      *.pyc
-      logs/
-      *.log
-      tests/
-      .pytest_cache
-      .ruff_cache
-      ```
-    - **`Dockerfile`** *(multi-stage production build running as a non-root user)*:
-      ```dockerfile
-      # Stage 1: Build dependencies in an isolated layer
-      FROM python:3.12-slim AS builder
-      COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-      WORKDIR /app
+### 1. Add Docker support via a branch + PR *(once core modules and `uv.lock` are stable)*
 
-      COPY pyproject.toml uv.lock ./
-      RUN uv sync --frozen --no-install-project --no-dev
+- **`.dockerignore`** *(keeps build context small and prevents leaking secrets, logs, or editor files into the image)*:
+  ```dockerignore
+  .git
+  .github
+  .vscode
+  .venv
+  .env
+  __pycache__
+  *.pyc
+  logs/
+  *.log
+  tests/
+  .pytest_cache
+  .ruff_cache
+  ```
 
-      COPY . .
-      RUN uv sync --frozen --no-dev
+- **`Dockerfile`** *(hardened non-root multi-stage build using `uv.lock`)*:
+  ```dockerfile
+  # Stage 1: Build dependencies in an isolated layer
+  FROM python:3.12-slim AS builder
+  COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+  WORKDIR /app
 
-      # Stage 2: Minimal hardened production runtime image
-      FROM python:3.12-slim
-      RUN useradd --create-home --shell /bin/bash appuser
-      WORKDIR /app
+  COPY pyproject.toml uv.lock ./
+  RUN uv sync --frozen --no-install-project --no-dev
 
-      COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
-      COPY --from=builder --chown=appuser:appuser /app/src /app/src
+  COPY . .
+  RUN uv sync --frozen --no-dev
 
-      USER appuser
-      ENV PATH="/app/.venv/bin:$PATH"
-      CMD ["python", "-m", "my_project.main"]
-      ```
-18. **Publish milestone releases:**
-    - Open **Releases** → click **Edit (pencil)** on the Draft release (`v0.1.0`, `v1.0.0`, etc.) → leave **"Set as a pre-release" unchecked** → click **Publish release**.
-    - This creates a permanent Git tag on `main`, displays the release as `Latest` on the main **Code** page, and resets Release Drafter to accumulate a fresh draft for the next PR.
+  # Stage 2: Minimal non-root production runtime image
+  FROM python:3.12-slim
+  RUN useradd --create-home appuser
+  WORKDIR /app
+
+  COPY --from=builder /app/.venv /app/.venv
+  COPY --from=builder /app/src /app/src
+
+  USER appuser
+  ENV PATH="/app/.venv/bin:$PATH"
+  CMD ["python", "-m", "my_project.main"]
+  ```
+
+### 2. Publishing Releases (Draft vs. Published)
+- **Draft Releases Stay Private Until Published:** Release Drafter continuously collects merged PRs into a single unpublished **Draft** under **Releases**, automatically updating the bullet list and bumping `MAJOR.MINOR.PATCH` until you are ready to cut a release.
+- **Publish All Release Levels:** Teams publish `MAJOR`, `MINOR`, and `PATCH` releases—not just major versions. Bundle related PRs into a meaningful milestone (or publish immediately for an urgent bug fix).
+- **How to Publish:** Go to **Releases** → click **Edit (pencil)** on the Draft → optionally add a summary note at the top → click **Publish release**. This creates a permanent Git tag on `main`, displays the release as `Latest` on the main **Code** page, and resets Release Drafter to start a fresh draft for the next PR.
+- **Leave "Set as a pre-release" Unchecked:** Pre-releases are only for `alpha`/`beta`/`rc` builds of mature `v1.0.0+` libraries and hide the release from the main **Code** page's `Latest` badge. Using `v0.x.y` versions already signals early-stage development.

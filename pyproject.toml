@@ -12,8 +12,10 @@ dependencies = [
 ]
 
 [project.scripts]
-hello-world = "hello_world:main"
-gcp-hello-world = "gcp_hello_world:main"
+hello-world = "hello_world.main:main"
+
+[tool.uv.build-backend]
+module-name = ["hello_world", "gcp_hello_world"]
 
 [build-system]
 requires = ["uv_build>=0.13.9,<0.14.0"]
